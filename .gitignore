@@ -1,0 +1,6 @@
+AI_Docs/
+node_modules/
+sessions/
+logs/
+.env
+*.log
