@@ -149,10 +149,105 @@ app.get("/api/get_qrcode", async (req, res) => {
     }
 });
 
+/**
+ * POST /api/send
+ *
+ * Sends a text message via an existing, connected WhatsApp instance.
+ *
+ * Body (application/json):
+ *   number       (required) — Destination number (e.g. 917357935653) or group JID
+ *   type         (required) — Must be "text"
+ *   message      (required) — Text message to send
+ *   instance_id  (required) — Must match Config.js instance_id
+ *   access_token (required) — Must match Config.js access_key
+ */
+app.post("/api/send", async (req, res) => {
+    console.log("[/api/send] Request received.");
+
+    try {
+        const config = freshConfig();
+        const { number, type, message, instance_id, access_token } = req.body;
+
+        // ── Validate required fields ───────────────────────────────────────────
+        if (!number || !type || !message || !instance_id || !access_token) {
+            console.warn("[/api/send] Validation failed: missing required parameters.");
+            return res.status(400).json({
+                status:  "error",
+                message: "Required parameters are missing.",
+            });
+        }
+
+        // ── Validate type ─────────────────────────────────────────────────────
+        if (type !== "text") {
+            console.warn(`[/api/send] Validation failed: unsupported type "${type}".`);
+            return res.status(400).json({
+                status:  "error",
+                message: "Unsupported message type.",
+            });
+        }
+
+        // ── Authenticate access_token ──────────────────────────────────────────
+        if (access_token !== config.access_key) {
+            console.warn("[/api/send] Authentication failed: invalid access token.");
+            return res.status(401).json({
+                status:  "error",
+                message: "Invalid access token.",
+            });
+        }
+
+        // ── Authenticate instance_id ───────────────────────────────────────────
+        if (instance_id !== config.instance_id) {
+            console.warn(`[/api/send] Authentication failed: invalid instance ID "${instance_id}".`);
+            return res.status(401).json({
+                status:  "error",
+                message: "Invalid instance ID.",
+            });
+        }
+
+        console.log(`[/api/send] Validation passed. Destination: ${number}`);
+
+        // ── Send message ───────────────────────────────────────────────────────
+        const result = await WAPPBUZZ.sendTextMessage(instance_id, number, message);
+
+        if (result.status === "error") {
+            // WhatsApp not connected or send failed
+            const httpStatus = result.message === "WhatsApp is not connected." ? 503 : 500;
+            console.error(`[/api/send] Send failed: ${result.message}`);
+            return res.status(httpStatus).json(result);
+        }
+
+        console.log(`[/api/send] Success. message_id=${result.data.message_id} timestamp=${result.data.timestamp}`);
+        return res.json(result);
+
+    } catch (err) {
+        console.error("[/api/send] Unexpected error:", err.message);
+        return res.status(500).json({
+            status:  "error",
+            message: "Failed to send message.",
+            reason:  err.message,
+        });
+    }
+});
+
 // ── Start server ──────────────────────────────────────────────────────────────
 
 app.listen(PORT, () => {
     console.log(`[WappBuzz] Server running on http://localhost:${PORT}`);
+
+    // ── Restore saved WhatsApp session on startup ──────────────────────────────
+    //
+    // When the server restarts the in-memory `instances` object is empty, but
+    // the Baileys session files (creds.json, etc.) are still on disk.
+    // restoreInstance() calls _startSocket() with the saved credentials so
+    // Baileys can reconnect silently — no QR code, no new instance.
+    //
+    const startupConfig = freshConfig();
+    if (startupConfig.instance_id) {
+        console.log(`[WappBuzz] Startup: restoring instance "${startupConfig.instance_id}" from saved session...`);
+        WAPPBUZZ.restoreInstance(startupConfig.instance_id);
+    } else {
+        console.log("[WappBuzz] Startup: no instance_id in Config.js, skipping session restore.");
+    }
 });
 
 module.exports = app;
