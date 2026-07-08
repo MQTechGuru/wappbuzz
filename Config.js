@@ -11,5 +11,5 @@ module.exports = {
     host:  "http://localhost",
     port:  3000,
     access_key:  "69a1ec7dc6f93",
-    instance_id:  "8DW69DAU7J5AA"
+    instance_id:  ""
 };
