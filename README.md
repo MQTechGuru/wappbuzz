@@ -22,6 +22,8 @@ Connect your WhatsApp account via QR code and send messages programmatically thr
 | QR Code Authentication | ✅ Available |
 | REST API | ✅ Available |
 | Send Text Messages | ✅ Available |
+| Health Check API | ✅ Available |
+| Real-time Socket.IO Events | ✅ Available |
 | WhatsApp Multi-Device Support | 🔜 Upcoming |
 | Pairing Code Login | 🔜 Upcoming |
 | Webhook Support | 🔜 Upcoming |
@@ -131,6 +133,8 @@ Every request requires an `access_token` that matches the `access_key` in `Confi
 | `POST` | `/api/create_instance` | Create a new WhatsApp instance |
 | `GET` | `/api/get_qrcode` | Get QR code for device authentication |
 | `POST` | `/api/send` | Send a text message |
+| `GET` | `/api/health` | Check WhatsApp connection status |
+| `POST` | `/api/health` | Check WhatsApp connection status (JSON body) |
 
 ---
 
@@ -261,6 +265,76 @@ Every API call requires:
 |-------|-------|-------------|
 | `access_token` | Query param or JSON body | Must match `access_key` in `Config.js` |
 | `instance_id` | Query param or JSON body | Must match `instance_id` in `Config.js` (not required for Create Instance) |
+
+---
+
+### 4. Health Check
+
+Check whether WhatsApp is connected and get live phone/name details.
+
+**GET (query string)**
+
+```http
+GET /api/health?instance_id=YOUR_INSTANCE_ID&access_token=YOUR_ACCESS_KEY
+```
+
+**POST (JSON body)**
+
+```http
+POST /api/health
+Content-Type: application/json
+```
+
+```json
+{
+    "instance_id": "YOUR_INSTANCE_ID",
+    "access_token": "YOUR_ACCESS_KEY"
+}
+```
+
+**Success Response — Connected**
+
+```json
+{
+    "status": "success",
+    "message": "WhatsApp is connected.",
+    "data": {
+        "instance_id": "YOUR_INSTANCE_ID",
+        "phone": "917357935653",
+        "push_name": "MQ TECH GURU",
+        "connection": "connected",
+        "platform": "android",
+        "socket": "connected",
+        "socket_io": "connected",
+        "timestamp": 1751960000
+    }
+}
+```
+
+**Error Response — Disconnected**
+
+```json
+{
+    "status": "error",
+    "message": "WhatsApp is disconnected.",
+    "data": {
+        "connection": "disconnected",
+        "socket": "disconnected",
+        "socket_io": "no clients"
+    }
+}
+```
+
+**Socket.IO Realtime Event**
+
+Every health check emits `instance_health` to all connected Socket.IO clients:
+
+```js
+const socket = io("http://localhost:3000");
+socket.on("instance_health", (data) => {
+    console.log(data); // { instance_id, status, phone, push_name }
+});
+```
 
 ---
 

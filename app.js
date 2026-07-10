@@ -7,11 +7,17 @@
 // ── Imports ──────────────────────────────────────────────────────────────────
 
 const express    = require("express");
+const http       = require("http");
+const { Server } = require("socket.io");
 const path       = require("path");
 const WAPPBUZZ   = require("./wappbuzz/wappbuzz");
 
-const app  = express();
-const PORT = process.env.PORT || 3000;
+const app    = express();
+const server = http.createServer(app);
+const io     = new Server(server, {
+    cors: { origin: "*", methods: ["GET", "POST"] },
+});
+const PORT   = process.env.PORT || 3000;
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
@@ -229,9 +235,174 @@ app.post("/api/send", async (req, res) => {
     }
 });
 
+// ── Health Check handler (shared by GET and POST) ─────────────────────────────
+
+/**
+ * Core health check logic — used by both GET and POST /api/health.
+ *
+ * 1. Validates access_token and instance_id against Config.js.
+ * 2. Calls WAPPBUZZ.getInstanceHealth() to inspect the in-memory socket.
+ * 3. Emits a realtime Socket.IO event "instance_health" to all connected clients.
+ * 4. Returns the structured HTTP response.
+ *
+ * Does NOT create a socket, reconnect, or generate a QR code.
+ *
+ * @param {import('express').Request}  req
+ * @param {import('express').Response} res
+ */
+async function handleHealthCheck(req, res) {
+    console.log(`[/api/health] Request received (${req.method}).`);
+
+    try {
+        const config = freshConfig();
+
+        // ── Read params from query string (GET) or body (POST) ────────────────
+        const instance_id  = req.query.instance_id  ?? req.body?.instance_id;
+        const access_token = req.query.access_token ?? req.body?.access_token;
+
+        // ── Validate required params ───────────────────────────────────────────
+        if (!instance_id || !access_token) {
+            console.warn("[/api/health] Missing required parameters.");
+            return res.status(400).json({
+                status:  "error",
+                message: "Required parameters are missing.",
+            });
+        }
+
+        // ── Authenticate access_token ──────────────────────────────────────────
+        if (access_token !== config.access_key) {
+            console.warn("[/api/health] Authentication failed: invalid access token.");
+            return res.status(401).json({
+                status:  "error",
+                message: "Invalid access token.",
+            });
+        }
+
+        // ── Authenticate instance_id ───────────────────────────────────────────
+        if (instance_id !== config.instance_id) {
+            console.warn(`[/api/health] Authentication failed: invalid instance ID "${instance_id}".`);
+            return res.status(401).json({
+                status:  "error",
+                message: "Invalid instance ID.",
+            });
+        }
+
+        // ── Inspect instance health ────────────────────────────────────────────
+        const h = WAPPBUZZ.getInstanceHealth(instance_id);
+
+        // ── Socket.IO connected clients count ──────────────────────────────────
+        const ioClients   = io.engine.clientsCount;
+        const socketIoStr = ioClients > 0 ? "connected" : "no clients";
+        console.log(`[/api/health] Socket.IO connected clients: ${ioClients}`);
+
+        // ── No active session on disk ──────────────────────────────────────────
+        if (!h.sessionOnDisk) {
+            io.emit("instance_health", { instance_id, status: "disconnected" });
+            return res.status(404).json({
+                status:  "error",
+                message: "No active session found.",
+            });
+        }
+
+        const timestamp = Math.floor(Date.now() / 1000);
+
+        // ── Connected ──────────────────────────────────────────────────────────────
+        //
+        // ROOT CAUSE FIX: the previous condition used h.wsReadyState === 1
+        // (WebSocket OPEN state). In Baileys v7 sock.ws is a custom wrapper whose
+        // readyState is undefined/non-standard, so the check always failed even
+        // when WhatsApp is fully connected.
+        //
+        // The correct authoritative source of truth is h.wsIsOpen which is derived
+        // from inst.status === "connected" — set by the Baileys connection.update
+        // event when connection === "open". This is 100% reliable.
+        //
+        if (h.wsIsOpen && h.socketExists) {
+            io.emit("instance_health", {
+                instance_id,
+                status:    "connected",
+                phone:     h.phone,
+                push_name: h.pushName,
+            });
+
+            console.log(`[/api/health] Result: CONNECTED | phone=${h.phone} | push_name=${h.pushName}`);
+
+            return res.json({
+                status:  "success",
+                message: "WhatsApp is connected.",
+                data: {
+                    instance_id,
+                    phone:       h.phone,
+                    push_name:   h.pushName,
+                    connection:  "connected",
+                    platform:    h.platform ?? "unknown",
+                    socket:      "connected",
+                    socket_io:   socketIoStr,
+                    timestamp,
+                },
+            });
+        }
+
+        // ── Disconnected (session exists but socket not open) ──────────────────
+        io.emit("instance_health", { instance_id, status: "disconnected" });
+
+        console.log(`[/api/health] Result: DISCONNECTED | status=${h.status} | ws=${h.wsReadyStateName}`);
+
+        return res.status(503).json({
+            status:  "error",
+            message: "WhatsApp is disconnected.",
+            data: {
+                connection: "disconnected",
+                socket:     h.socketExists ? h.wsReadyStateName.toLowerCase() : "disconnected",
+                socket_io:  socketIoStr,
+            },
+        });
+
+    } catch (err) {
+        console.error("[/api/health] Unexpected error:", err.message);
+        return res.status(500).json({
+            status:  "error",
+            message: "Health check failed.",
+            reason:  err.message,
+        });
+    }
+}
+
+/**
+ * GET /api/health
+ *
+ * Health check via query parameters.
+ *
+ * Query params:
+ *   instance_id   (required) — must match Config.js instance_id
+ *   access_token  (required) — must match Config.js access_key
+ */
+app.get("/api/health", handleHealthCheck);
+
+/**
+ * POST /api/health
+ *
+ * Health check via JSON body.
+ *
+ * Body (application/json):
+ *   instance_id   (required) — must match Config.js instance_id
+ *   access_token  (required) — must match Config.js access_key
+ */
+app.post("/api/health", handleHealthCheck);
+
+// ── Socket.IO ─────────────────────────────────────────────────────────────────
+
+io.on("connection", (socket) => {
+    console.log(`[Socket.IO] Client connected: ${socket.id} | total=${io.engine.clientsCount}`);
+
+    socket.on("disconnect", () => {
+        console.log(`[Socket.IO] Client disconnected: ${socket.id} | total=${io.engine.clientsCount}`);
+    });
+});
+
 // ── Start server ──────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`[WappBuzz] Server running on http://localhost:${PORT}`);
 
     // ── Restore saved WhatsApp session on startup ──────────────────────────────
@@ -250,4 +421,4 @@ app.listen(PORT, () => {
     }
 });
 
-module.exports = app;
+module.exports = { app, io, server };
