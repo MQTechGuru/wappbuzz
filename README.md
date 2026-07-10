@@ -7,7 +7,7 @@ WappBuzz is a Node.js based WhatsApp API Automation
 WhatsApp automation platform built on top of multi-device library.
 Connect your WhatsApp account via QR code and send messages programmatically through a clean REST API.
 
-![Status](https://img.shields.io/badge/Status-Under%20Development-orange?style=flat-square)
+![Status](https://img.shields.io/badge/Status-Beta%20Version-orange?style=flat-square)
 ![Node](https://img.shields.io/badge/Node.js-20%2B-brightgreen?style=flat-square&logo=nodedotjs)
 ![License](https://img.shields.io/badge/License-Private-red?style=flat-square)
 
