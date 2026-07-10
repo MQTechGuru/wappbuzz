@@ -307,4 +307,121 @@ async function _startSocket(instanceId) {
 
 // ─── Exports ─────────────────────────────────────────────────────────────────
 
-module.exports = { createInstance, getQRCode, sendTextMessage, restoreInstance };
+/**
+ * Inspect the health of an existing WhatsApp instance.
+ *
+ * Reads the in-memory `instances` store and returns a structured snapshot.
+ * Does NOT create a socket, reconnect, or generate a QR code.
+ *
+ * ROOT CAUSE NOTE (Baileys v7):
+ *   sock.ws.readyState is NOT reliable in Baileys v7 because sock.ws is a
+ *   custom WebSocketClient wrapper whose readyState may be undefined or
+ *   non-standard. The authoritative source of truth is inst.status which is
+ *   set by the Baileys connection.update event system when connection === "open".
+ *
+ * @param {string} instanceId
+ * @returns {{
+ *   instanceFound: boolean,
+ *   sessionOnDisk: boolean,
+ *   status: string,
+ *   socketExists: boolean,
+ *   socketUser: object|null,
+ *   wsReadyState: number|null,
+ *   wsReadyStateName: string,
+ *   wsIsOpen: boolean,
+ *   phone: string|null,
+ *   pushName: string|null,
+ *   platform: string|null
+ * }}
+ */
+function getInstanceHealth(instanceId) {
+    const inst          = instances[instanceId];
+    const sessDir       = sessionPath(instanceId);
+    const sessionOnDisk = fs.existsSync(sessDir);
+    const wsStateNames  = { 0: "CONNECTING", 1: "OPEN", 2: "CLOSING", 3: "CLOSED" };
+
+    // ── Full diagnostic log ───────────────────────────────────────────────────
+    console.log(`[WAPPBUZZ][HEALTH] ─── getInstanceHealth ───`);
+    console.log(`[WAPPBUZZ][HEALTH] instance_id             : "${instanceId}"`);
+    console.log(`[WAPPBUZZ][HEALTH] instances keys in mem   : [${Object.keys(instances).join(", ") || "none"}]`);
+    console.log(`[WAPPBUZZ][HEALTH] instance found in mem   : ${!!inst}`);
+    console.log(`[WAPPBUZZ][HEALTH] session on disk         : ${sessionOnDisk}`);
+    console.log(`[WAPPBUZZ][HEALTH] session path            : ${sessDir}`);
+
+    if (!inst) {
+        console.warn(`[WAPPBUZZ][HEALTH] socket found            : false`);
+        console.warn(`[WAPPBUZZ][HEALTH] connection state        : not-found`);
+        return {
+            instanceFound:    false,
+            sessionOnDisk,
+            status:           "not-found",
+            socketExists:     false,
+            socketUser:       null,
+            wsReadyState:     null,
+            wsReadyStateName: "N/A",
+            wsIsOpen:         false,
+            phone:            null,
+            pushName:         null,
+            platform:         null,
+        };
+    }
+
+    // ── Read socket object ────────────────────────────────────────────────────
+    const sock        = inst.sock;
+    const socketExists = !!sock;
+    const socketUser  = sock?.user ?? null;
+
+    // ── Resolve WebSocket readyState — Baileys v7 uses a wrapper object ───────
+    // Primary  : sock.ws.readyState         (standard raw WS, Baileys v6)
+    // Secondary: sock.ws.socket.readyState  (raw WS inside Baileys v7 wrapper)
+    // Both may be undefined — this is diagnostic only, NOT the connection gate.
+    const wsObj        = sock?.ws;
+    const wsReadyState = wsObj?.readyState           // primary path
+                      ?? wsObj?.socket?.readyState   // secondary path (Baileys v7)
+                      ?? null;
+    const wsName       = wsStateNames[wsReadyState] ?? "UNKNOWN";
+
+    // ── Authoritative connection flag ─────────────────────────────────────────
+    // inst.status is set to "connected" when Baileys fires connection === "open".
+    // This is the correct and only reliable source of truth in Baileys v7.
+    // ws.readyState is logged for diagnostics but is NOT used as a gate.
+    const wsIsOpen = inst.status === "connected";
+
+    // ── Extract phone & push_name from sock.user ──────────────────────────────
+    // Baileys stores: sock.user.id = "<number>@s.whatsapp.net"
+    //             or: sock.user.id = "<number>:<device>@s.whatsapp.net" (multi-device)
+    const rawId    = socketUser?.id ?? null;
+    const phone    = rawId ? rawId.split("@")[0].split(":")[0] : null;
+    const pushName = socketUser?.name ?? null;
+    const platform = socketUser?.platform ?? null;
+
+    // ── Full diagnostic dump ──────────────────────────────────────────────────
+    console.log(`[WAPPBUZZ][HEALTH] socket exists           : ${socketExists}`);
+    console.log(`[WAPPBUZZ][HEALTH] socket.user             : ${JSON.stringify(socketUser)}`);
+    console.log(`[WAPPBUZZ][HEALTH] sock.ws type            : ${typeof wsObj}`);
+    console.log(`[WAPPBUZZ][HEALTH] sock.ws keys (first 15) : ${wsObj ? Object.keys(wsObj).slice(0, 15).join(", ") : "N/A"}`);
+    console.log(`[WAPPBUZZ][HEALTH] sock.ws.readyState      : ${wsObj?.readyState ?? "undefined"}`);
+    console.log(`[WAPPBUZZ][HEALTH] sock.ws.socket?.rState  : ${wsObj?.socket?.readyState ?? "undefined"}`);
+    console.log(`[WAPPBUZZ][HEALTH] resolved wsReadyState   : ${wsReadyState} (${wsName})`);
+    console.log(`[WAPPBUZZ][HEALTH] inst.status (Baileys)   : "${inst.status}"`);
+    console.log(`[WAPPBUZZ][HEALTH] wsIsOpen (authoritative): ${wsIsOpen}`);
+    console.log(`[WAPPBUZZ][HEALTH] phone                   : ${phone}`);
+    console.log(`[WAPPBUZZ][HEALTH] push_name               : ${pushName}`);
+    console.log(`[WAPPBUZZ][HEALTH] platform                : ${platform}`);
+
+    return {
+        instanceFound:    true,
+        sessionOnDisk,
+        status:           inst.status,
+        socketExists,
+        socketUser,
+        wsReadyState,
+        wsReadyStateName: wsName,
+        wsIsOpen,
+        phone,
+        pushName,
+        platform,
+    };
+}
+
+module.exports = { createInstance, getQRCode, sendTextMessage, restoreInstance, getInstanceHealth };

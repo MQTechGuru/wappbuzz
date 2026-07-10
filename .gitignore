@@ -4,3 +4,4 @@ sessions/
 logs/
 .env
 *.log
+config.js
