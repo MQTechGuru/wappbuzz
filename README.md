@@ -133,8 +133,7 @@ Every request requires an `access_token` that matches the `access_key` in `Confi
 | `POST` | `/api/create_instance` | Create a new WhatsApp instance |
 | `GET` | `/api/get_qrcode` | Get QR code for device authentication |
 | `POST` | `/api/send` | Send a text message |
-| `GET` | `/api/health` | Check WhatsApp connection status |
-| `POST` | `/api/health` | Check WhatsApp connection status (JSON body) |
+| `POST` | `/api/health` | Check WhatsApp connection status |
 | `POST` | `/api/reboot` | Logout session and generate new QR Code |
 | `POST` | `/api/reset_instance` | Completely reset and create a new Instance ID |
 | `POST` | `/api/reconnect` | Reconnect socket reusing existing credentials |
@@ -275,18 +274,12 @@ Every API call requires:
 
 Check whether WhatsApp is connected and get live phone/name details.
 
-**GET (query string)**
-
-```http
-GET /api/health?instance_id=YOUR_INSTANCE_ID&access_token=YOUR_ACCESS_KEY
-```
-
-**POST (JSON body)**
-
 ```http
 POST /api/health
 Content-Type: application/json
 ```
+
+**Request Body**
 
 ```json
 {
@@ -475,7 +468,61 @@ The `wb_whatsapp_sessions` table is excluded because it stores only real WhatsAp
 
 ## Status
 
-🚧 **Project is currently under active development.**
+✅ WappBuzz Community Edition is now Live.
+
+The project is actively maintained and receives regular updates, improvements, and new features.
+
+Two editions are available:
+
+- Community Edition (Free)
+- WappBuzz Pro
+
+---
+
+## Editions
+
+### 🟢 Community Edition (Free)
+
+Included Features:
+
+- Multi WhatsApp Accounts
+- QR Code Login
+- Pairing Code Login
+- REST API
+- Webhook Support
+- Session Management
+- Queue System
+- Socket.IO
+- Text Messaging
+- Instance Management
+- Health Monitoring
+- Reboot
+- Reset Instance
+- Reconnect
+
+### ⭐ WappBuzz Pro
+
+More Information:
+
+https://mqtechguru.com/product/wappbuzz-pro
+
+Pro Features include:
+
+- Send Images
+- Send Videos
+- Send Audio
+- Send PDF Documents
+- Send Stickers
+- Send Contacts
+- Send Location
+- Send Media Files
+- Button Templates
+- List Templates
+- Poll System
+- Advanced Messaging
+- Media Caption Support
+- Upcoming Broadcast Messages
+- Additional Premium Features
 
 ---
 

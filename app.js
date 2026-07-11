@@ -416,10 +416,10 @@ app.post("/api/reconnect", async (req, res) => {
     }
 });
 
-// ── Health Check handler (shared by GET and POST) ─────────────────────────────
+// ── Health Check handler ──────────────────────────────────────────────────────
 
 /**
- * Core health check logic — used by both GET and POST /api/health.
+ * Core health check logic — used by POST /api/health.
  *
  * 1. Validates access_token and instance_id against Config.js.
  * 2. Calls WAPPBUZZ.getInstanceHealth() to inspect the in-memory socket.
@@ -544,17 +544,6 @@ async function handleHealthCheck(req, res) {
         });
     }
 }
-
-/**
- * GET /api/health
- *
- * Health check via query parameters.
- *
- * Query params:
- *   instance_id   (required) — must match Config.js instance_id
- *   access_token  (required) — must match Config.js access_key
- */
-app.get("/api/health", handleHealthCheck);
 
 /**
  * POST /api/health
