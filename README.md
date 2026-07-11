@@ -135,6 +135,9 @@ Every request requires an `access_token` that matches the `access_key` in `Confi
 | `POST` | `/api/send` | Send a text message |
 | `GET` | `/api/health` | Check WhatsApp connection status |
 | `POST` | `/api/health` | Check WhatsApp connection status (JSON body) |
+| `POST` | `/api/reboot` | Logout session and generate new QR Code |
+| `POST` | `/api/reset_instance` | Completely reset and create a new Instance ID |
+| `POST` | `/api/reconnect` | Reconnect socket reusing existing credentials |
 
 ---
 
@@ -338,6 +341,97 @@ socket.on("instance_health", (data) => {
 
 ---
 
+### 5. Reboot Instance
+
+Logout the current WhatsApp session and generate a new QR Code while keeping the same Instance ID.
+
+```http
+POST /api/reboot
+Content-Type: application/json
+```
+
+**Request Body**
+
+```json
+{
+    "instance_id": "6A46C4394EECD",
+    "access_token": "6a511034b0c20"
+}
+```
+
+**Success Response**
+
+```json
+{
+    "status": "success",
+    "message": "Instance rebooted and cleaned up successfully."
+}
+```
+
+---
+
+### 6. Reset Instance
+
+Completely reset an instance, deleting files and DB entries, and generating a brand-new Instance ID.
+
+```http
+POST /api/reset_instance
+Content-Type: application/json
+```
+
+**Request Body**
+
+```json
+{
+    "instance_id": "6A46C4394EECD",
+    "access_token": "6a511034b0c20"
+}
+```
+
+**Success Response**
+
+```json
+{
+    "status": "success",
+    "message": "Instance reset successfully.",
+    "data": {
+        "instance_id": "NEWINSTANCE123",
+        "next_step": "Generate a new QR Code."
+    }
+}
+```
+
+---
+
+### 7. Reconnect
+
+Reconnect an existing instance without generating a new Instance ID.
+
+```http
+POST /api/reconnect
+Content-Type: application/json
+```
+
+**Request Body**
+
+```json
+{
+    "instance_id": "6A46C4394EECD",
+    "access_token": "6a511034b0c20"
+}
+```
+
+**Success Response**
+
+```json
+{
+    "status": "success",
+    "message": "Reconnect process started."
+}
+```
+
+---
+
 ## Project Structure
 
 ```
@@ -352,6 +446,30 @@ wappbuzz/
     └── extend.js       # Extended helpers
 
 ```
+
+---
+
+## Database
+
+* **MySQL** / **phpMyAdmin**
+* **Database Name**: `wappbuzz`
+* **Tables**:
+  - `wb_users`
+  - `wb_team`
+  - `wb_accounts`
+  - `wb_whatsapp_sessions`
+
+---
+
+## Automatic Database Seed
+
+The application automatically checks the database during startup.
+
+If `wb_users`, `wb_team`, or `wb_accounts` are empty, default records are inserted automatically.
+
+Existing records are never modified.
+
+The `wb_whatsapp_sessions` table is excluded because it stores only real WhatsApp login sessions.
 
 ---
 

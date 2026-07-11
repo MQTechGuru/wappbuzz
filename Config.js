@@ -8,8 +8,20 @@
  */
 
 module.exports = {
-    host:  "http://localhost",
-    port:  3000,
-    access_key:  "69a1ec7dc6f93",
-    instance_id:  ""
+    host: "http://localhost",
+    port: 3000,
+    prefix: "wb_",
+    frontend: 'http://localhost/wappbuzzinstall',
+    redis: "redis://127.0.0.1:6379",
+    database: {
+        "connectionLimit": 500,
+        "host": "localhost",
+        "user": "root",
+        "password": "Ramju786@@@",
+        "database": "wappbuzz",
+        "charset": "utf8mb4",
+        "debug": false,
+        "waitForConnections": true,
+        "multipleStatements": true
+    }
 };

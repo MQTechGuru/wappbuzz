@@ -11,13 +11,14 @@ const http       = require("http");
 const { Server } = require("socket.io");
 const path       = require("path");
 const WAPPBUZZ   = require("./wappbuzz/wappbuzz");
+const config     = require("./Config");
 
 const app    = express();
 const server = http.createServer(app);
 const io     = new Server(server, {
     cors: { origin: "*", methods: ["GET", "POST"] },
 });
-const PORT   = process.env.PORT || 3000;
+const PORT   = process.env.PORT || config.port;
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
@@ -37,6 +38,65 @@ function freshConfig() {
     return require(configPath);
 }
 
+/**
+ * Unifies request authorization across all APIs.
+ * Validates access_token against wb_team.ids.
+ */
+async function authorizeRequest(req, res) {
+    const access_token = req.query?.access_token ?? req.body?.access_token;
+
+    if (!access_token) {
+        res.status(401).json({
+            status: "error",
+            message: "Invalid access key."
+        });
+        return null;
+    }
+
+    const config = freshConfig();
+    const prefix = config.prefix || "wb_";
+    const db = require("./wappbuzz/db");
+
+    try {
+        const teams = await db.query(`SELECT COUNT(*) as count FROM \`${prefix}team\` WHERE ids = ?`, [access_token]);
+        const authorized = teams[0].count > 0;
+
+        if (!authorized) {
+            res.status(401).json({
+                status: "error",
+                message: "Invalid access key."
+            });
+            return null;
+        }
+
+        return access_token;
+    } catch (e) {
+        console.error("Authorization database query error:", e.message);
+        res.status(401).json({
+            status: "error",
+            message: "Invalid access key."
+        });
+        return null;
+    }
+}
+
+/**
+ * Validate instance_id against database
+ */
+async function isValidInstanceId(instanceId) {
+    if (!instanceId) return false;
+    const config = freshConfig();
+    const prefix = config.prefix || "wb_";
+    const db = require("./wappbuzz/db");
+    try {
+        const sessions = await db.query(`SELECT COUNT(*) as count FROM \`${prefix}whatsapp_sessions\` WHERE instance_id = ?`, [instanceId]);
+        return sessions[0].count > 0;
+    } catch (e) {
+        console.error("[Database System] Error validating instance ID:", e.message);
+        return false;
+    }
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 /**
@@ -50,38 +110,17 @@ function freshConfig() {
  *   access_token  (required) — must match Config.js access_key
  *   force         (optional) — set to "true" to force recreation
  */
-app.post("/api/create_instance", async (req, res) => {
+async function handleCreateInstance(req, res) {
     try {
-        const config                  = freshConfig();
-        const { access_token, force } = req.query;
+        const config = freshConfig();
 
         // ── Validate access_token ──────────────────────────────────────────────────
-        if (!access_token || access_token !== config.access_key) {
-            return res.status(401).json({
-                status:  "error",
-                message: "Invalid access key.",
-            });
-        }
-
-        // ── Return existing instance unless force recreation requested ──────────
-        if (config.instance_id && force !== "true") {
-            const qr_code_url = `${config.host}:${config.port}/api/get_qrcode?access_token=${config.access_key}&instance_id=${config.instance_id}`;
-            return res.json({
-                status:  "success",
-                message: "Instance already exists.",
-                data: {
-                    instance_id: config.instance_id,
-                    qr_code_url,
-                    next_step: "Scan the QR code with your WhatsApp mobile app to connect",
-                },
-            });
-        }
+        const access_token = await authorizeRequest(req, res);
+        if (!access_token) return;
 
         // ── Create a new instance ───────────────────────────────────────────────
-        const result    = await WAPPBUZZ.createInstance();
-        // Re-read config so we pick up the freshly written instance_id
-        const newConfig = freshConfig();
-        const qr_code_url = `${newConfig.host}:${newConfig.port}/api/get_qrcode?access_token=${newConfig.access_key}&instance_id=${result.instance_id}`;
+        const result = await WAPPBUZZ.createInstance();
+        const qr_code_url = `${config.host}:${config.port}/api/get_qrcode?access_token=${access_token}&instance_id=${result.instance_id}`;
 
         return res.json({
             status:  "success",
@@ -101,7 +140,10 @@ app.post("/api/create_instance", async (req, res) => {
             error:   err.message,
         });
     }
-});
+}
+
+app.get("/api/create_instance", handleCreateInstance);
+app.post("/api/create_instance", handleCreateInstance);
 
 /**
  * GET /api/get_qrcode
@@ -114,27 +156,15 @@ app.post("/api/create_instance", async (req, res) => {
  */
 app.get("/api/get_qrcode", async (req, res) => {
     try {
-        const config = freshConfig();
-        const { instance_id, access_token } = req.query;
+        const { instance_id } = req.query;
 
-        // ── Validate access_key ────────────────────────────────────────────────
-        if (!access_token || access_token !== config.access_key) {
-            return res.status(401).json({
-                status:  "error",
-                message: "Invalid access key.",
-            });
-        }
+        // ── Validate access_token ────────────────────────────────────────────────
+        const access_token = await authorizeRequest(req, res);
+        if (!access_token) return;
 
-        // ── Check that an instance exists in Config ─────────────────────────────
-        if (!config.instance_id) {
-            return res.json({
-                status:  "error",
-                message: "Instance not found.",
-            });
-        }
-
-        // ── Validate provided instance_id matches stored one ──────────────────
-        if (!instance_id || instance_id !== config.instance_id) {
+        // ── Validate provided instance_id exists in the database ───────────────
+        const isValidId = await isValidInstanceId(instance_id);
+        if (!isValidId) {
             return res.json({
                 status:  "error",
                 message: "Instance not found.",
@@ -193,16 +223,13 @@ app.post("/api/send", async (req, res) => {
         }
 
         // ── Authenticate access_token ──────────────────────────────────────────
-        if (access_token !== config.access_key) {
-            console.warn("[/api/send] Authentication failed: invalid access token.");
-            return res.status(401).json({
-                status:  "error",
-                message: "Invalid access token.",
-            });
-        }
+        // ── Authenticate access_token ──────────────────────────────────────────
+        const authorized_token = await authorizeRequest(req, res);
+        if (!authorized_token) return;
 
         // ── Authenticate instance_id ───────────────────────────────────────────
-        if (instance_id !== config.instance_id) {
+        const isValidId = await isValidInstanceId(instance_id);
+        if (!isValidId) {
             console.warn(`[/api/send] Authentication failed: invalid instance ID "${instance_id}".`);
             return res.status(401).json({
                 status:  "error",
@@ -230,6 +257,160 @@ app.post("/api/send", async (req, res) => {
         return res.status(500).json({
             status:  "error",
             message: "Failed to send message.",
+            reason:  err.message,
+        });
+    }
+});
+
+/**
+ * POST /api/reboot
+ *
+ * Logs out and performs complete cleanup of the specified WhatsApp instance.
+ *
+ * Body (application/json):
+ *   instance_id   (required) — Must match the session's instance_id
+ *   access_token  (required) — Must match access_key permissions
+ */
+app.post("/api/reboot", async (req, res) => {
+    console.log("[/api/reboot] Request received.");
+    try {
+        const { instance_id } = req.body;
+
+        // ── Validate access_token ──────────────────────────────────────────
+        const authorized_token = await authorizeRequest(req, res);
+        if (!authorized_token) return;
+
+        // ── Authenticate instance_id ───────────────────────────────────────────
+        const isValidId = await isValidInstanceId(instance_id);
+        if (!isValidId) {
+            console.warn(`[/api/reboot] Authentication failed: invalid instance ID "${instance_id}".`);
+            return res.status(401).json({
+                status:  "error",
+                message: "Invalid instance ID.",
+            });
+        }
+
+        // Perform the full cleanup process
+        await WAPPBUZZ.cleanupInstance(instance_id);
+
+        return res.json({
+            status: "success",
+            message: "Instance rebooted and cleaned up successfully."
+        });
+
+    } catch (err) {
+        console.error("[/api/reboot] Unexpected error:", err.message);
+        return res.status(500).json({
+            status:  "error",
+            message: "Failed to reboot instance.",
+            reason:  err.message,
+        });
+    }
+});
+
+/**
+ * POST /api/reset_instance
+ *
+ * Completely resets a WhatsApp instance: logs out, deletes session folder,
+ * deletes the old database entries, generates a new Instance ID, saves it
+ * in the database, and returns the new instance information.
+ *
+ * Body (application/json):
+ *   instance_id   (required) — The current instance_id
+ *   access_token  (required) — Authorization access token
+ */
+app.post("/api/reset_instance", async (req, res) => {
+    console.log("[/api/reset_instance] Request received.");
+    try {
+        const { instance_id } = req.body;
+
+        // ── Validate access_token ──────────────────────────────────────────
+        const authorized_token = await authorizeRequest(req, res);
+        if (!authorized_token) return;
+
+        // ── Authenticate instance_id ───────────────────────────────────────────
+        const isValidId = await isValidInstanceId(instance_id);
+        if (!isValidId) {
+            console.warn(`[/api/reset_instance] Authentication failed: invalid instance ID "${instance_id}".`);
+            return res.status(401).json({
+                status:  "error",
+                message: "Invalid instance ID.",
+            });
+        }
+
+        // 1. Perform complete cleanup (closes socket, removes listeners, deletes memory/folder)
+        await WAPPBUZZ.cleanupInstance(instance_id);
+
+        // 2. Completely delete the database rows for the old session/account
+        const config = freshConfig();
+        const prefix = config.prefix || "wb_";
+        const db = require("./wappbuzz/db");
+        await db.query(`DELETE FROM \`${prefix}whatsapp_sessions\` WHERE instance_id = ?`, [instance_id]);
+        await db.query(`DELETE FROM \`${prefix}accounts\` WHERE token = ?`, [instance_id]);
+
+        // 3. Create a brand-new instance ID and background socket
+        const result = await WAPPBUZZ.createInstance();
+
+        return res.json({
+            status: "success",
+            message: "Instance reset successfully.",
+            data: {
+                instance_id: result.instance_id,
+                next_step: "Generate a new QR Code."
+            }
+        });
+
+    } catch (err) {
+        console.error("[/api/reset_instance] Unexpected error:", err.message);
+        return res.status(500).json({
+            status:  "error",
+            message: "Failed to reset instance.",
+            reason:  err.message,
+        });
+    }
+});
+
+/**
+ * POST /api/reconnect
+ *
+ * Reconnects an existing instance without generating a new Instance ID.
+ *
+ * Body (application/json):
+ *   instance_id   (required) — The current instance_id
+ *   access_token  (required) — Authorization access token
+ */
+app.post("/api/reconnect", async (req, res) => {
+    console.log("[/api/reconnect] Request received.");
+    try {
+        const { instance_id } = req.body;
+
+        // ── Validate access_token ──────────────────────────────────────────
+        const authorized_token = await authorizeRequest(req, res);
+        if (!authorized_token) return;
+
+        // ── Authenticate instance_id ───────────────────────────────────────────
+        const isValidId = await isValidInstanceId(instance_id);
+        if (!isValidId) {
+            console.warn(`[/api/reconnect] Authentication failed: invalid instance ID "${instance_id}".`);
+            return res.status(401).json({
+                status:  "error",
+                message: "Invalid instance ID.",
+            });
+        }
+
+        // Recreate the socket connection reusing existing session files
+        await WAPPBUZZ.reconnectInstance(instance_id);
+
+        return res.json({
+            status: "success",
+            message: "Reconnect process started."
+        });
+
+    } catch (err) {
+        console.error("[/api/reconnect] Unexpected error:", err.message);
+        return res.status(500).json({
+            status:  "error",
+            message: "Failed to reconnect instance.",
             reason:  err.message,
         });
     }
@@ -270,16 +451,12 @@ async function handleHealthCheck(req, res) {
         }
 
         // ── Authenticate access_token ──────────────────────────────────────────
-        if (access_token !== config.access_key) {
-            console.warn("[/api/health] Authentication failed: invalid access token.");
-            return res.status(401).json({
-                status:  "error",
-                message: "Invalid access token.",
-            });
-        }
+        const authorized_token = await authorizeRequest(req, res);
+        if (!authorized_token) return;
 
         // ── Authenticate instance_id ───────────────────────────────────────────
-        if (instance_id !== config.instance_id) {
+        const isValidId = await isValidInstanceId(instance_id);
+        if (!isValidId) {
             console.warn(`[/api/health] Authentication failed: invalid instance ID "${instance_id}".`);
             return res.status(401).json({
                 status:  "error",
@@ -405,20 +582,42 @@ io.on("connection", (socket) => {
 server.listen(PORT, () => {
     console.log(`[WappBuzz] Server running on http://localhost:${PORT}`);
 
-    // ── Restore saved WhatsApp session on startup ──────────────────────────────
-    //
-    // When the server restarts the in-memory `instances` object is empty, but
-    // the Baileys session files (creds.json, etc.) are still on disk.
-    // restoreInstance() calls _startSocket() with the saved credentials so
-    // Baileys can reconnect silently — no QR code, no new instance.
-    //
-    const startupConfig = freshConfig();
-    if (startupConfig.instance_id) {
-        console.log(`[WappBuzz] Startup: restoring instance "${startupConfig.instance_id}" from saved session...`);
-        WAPPBUZZ.restoreInstance(startupConfig.instance_id);
-    } else {
-        console.log("[WappBuzz] Startup: no instance_id in Config.js, skipping session restore.");
-    }
+    // Initialize the MySQL database system and execute seeding
+    const db = require("./wappbuzz/db");
+    const seed = require("./database/seed");
+    
+    db.initialize()
+        .then(async () => {
+            console.log("──────────────────────────────");
+            console.log("✓ Database Connected");
+            console.log("✓ Running Database Seed...");
+            
+            // Run the transaction-safe seeding process
+            await seed.runDatabaseSeed(db.getPool());
+            
+            console.log("✓ Database Seed Completed");
+            console.log("──────────────────────────────");
+
+            // Restore saved WhatsApp sessions on startup from the database
+            try {
+                const startupConfig = freshConfig();
+                const prefix = startupConfig.prefix || "wb_";
+                const sessions = await db.query(`SELECT instance_id FROM \`${prefix}whatsapp_sessions\``);
+                if (sessions.length > 0) {
+                    for (const session of sessions) {
+                        console.log(`[WappBuzz] Startup: restoring instance "${session.instance_id}" from saved session...`);
+                        WAPPBUZZ.restoreInstance(session.instance_id);
+                    }
+                } else {
+                    console.log("[WappBuzz] Startup: no sessions found in database, skipping session restore.");
+                }
+            } catch (dbErr) {
+                console.error("[WappBuzz] Startup: failed to load sessions from database for restoration:", dbErr.message);
+            }
+        })
+        .catch((err) => {
+            console.error("[Database System] Initialization/Seeding failed. Server running but DB features will be unavailable:", err.message);
+        });
 });
 
 module.exports = { app, io, server };

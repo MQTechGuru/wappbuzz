@@ -2,6 +2,7 @@ AI_Docs/
 node_modules/
 sessions/
 logs/
+.pm2/
 .env
 *.log
 config.js
