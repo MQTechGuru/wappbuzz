@@ -705,10 +705,21 @@ async function cleanupInstance(instanceId) {
     if (inst) {
         if (inst.sock) {
             try {
+                // Remove listeners first to prevent close events from triggering automatic loops
                 inst.sock.ev.removeAllListeners();
-                inst.sock.end(undefined);
+
+                console.log(`[WAPPBUZZ] Sending logout command to WhatsApp servers for "${instanceId}"...`);
+                // Await Baileys logout with a safety timeout
+                await Promise.race([
+                    inst.sock.logout(),
+                    new Promise((resolve) => setTimeout(resolve, 8000))
+                ]);
+                console.log(`[WAPPBUZZ] WhatsApp server logout complete for "${instanceId}".`);
             } catch (err) {
-                console.error(`[WAPPBUZZ] Error closing socket for "${instanceId}":`, err.message);
+                console.error(`[WAPPBUZZ] Error during socket logout for "${instanceId}":`, err.message);
+                try {
+                    inst.sock.end(undefined);
+                } catch (e) {}
             }
         }
     }
