@@ -579,12 +579,11 @@ server.listen(PORT, () => {
         .then(async () => {
             console.log("──────────────────────────────");
             console.log("✓ Database Connected");
-            console.log("✓ Running Database Seed...");
-            
-            // Run the transaction-safe seeding process
-            await seed.runDatabaseSeed(db.getPool());
-            
-            console.log("✓ Database Seed Completed");
+            // Development Only
+            // seed.js can be executed manually when needed.
+            // console.log("✓ Running Database Seed...");
+            // await seed.runDatabaseSeed(db.getPool());
+            // console.log("✓ Database Seed Completed");
             console.log("──────────────────────────────");
 
             // Restore saved WhatsApp sessions on startup from the database

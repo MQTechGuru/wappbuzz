@@ -51,6 +51,14 @@ async function runDatabaseSeed(pool) {
 
         const statusLogs = [];
 
+        // Truncate runtime tables before seeding
+        console.log(`[SEED] Truncating runtime tables...`);
+        await executeQuery("SET FOREIGN_KEY_CHECKS = 0");
+        await executeQuery(`TRUNCATE TABLE \`${prefix}accounts\``);
+        await executeQuery(`TRUNCATE TABLE \`${prefix}whatsapp_sessions\``);
+        await executeQuery("SET FOREIGN_KEY_CHECKS = 1");
+        statusLogs.push(`✓ Runtime tables ${prefix}accounts and ${prefix}whatsapp_sessions truncated`);
+
         // 1. Seed wb_users
         const usersCountRes = await executeQuery(`SELECT COUNT(*) as count FROM \`${prefix}users\``);
         const usersCount = usersCountRes[0].count;
@@ -86,7 +94,7 @@ async function runDatabaseSeed(pool) {
         const teamCountRes = await executeQuery(`SELECT COUNT(*) as count FROM \`${prefix}team\``);
         const teamCount = teamCountRes[0].count;
         if (teamCount === 0) {
-            const teamIds = Math.random().toString(36).substring(2, 15);
+            const teamIds = adminIds; // Use identical IDs for user and team
             const teamPid = Math.floor(100 + Math.random() * 900);
             const defaultTeam = [
                 1, teamIds, 1, teamPid,
